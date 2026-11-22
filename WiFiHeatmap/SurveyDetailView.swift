@@ -125,7 +125,7 @@ struct SurveyDetailView: View {
         }
         .frame(width: fit.width, height: fit.height)
         .contentShape(Rectangle())
-        .onTapGesture(coordinateSpace: .local) { location in
+        .onTapGesture { location in
             guard !measuring else { return }
             placing = CGPoint(x: min(max(location.x / fit.width, 0), 1),
                               y: min(max(location.y / fit.height, 0), 1))

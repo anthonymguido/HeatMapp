@@ -42,7 +42,7 @@ final class SurveyStore: ObservableObject {
     }
 
     func setFloorPlan(_ image: UIImage, for id: UUID) {
-        guard let survey = survey(id),
+        guard let survey = self.survey(id),
               let data = image.normalizedForFloorPlan().jpegData(compressionQuality: 0.9) else { return }
         let name = "floorplan-\(UUID().uuidString).jpg"
         do {
