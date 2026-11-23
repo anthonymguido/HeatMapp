@@ -170,11 +170,30 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage(ProbeSettings.latencyURLKey) private var latencyURL = ProbeSettings.defaultLatencyURL
     @AppStorage(ProbeSettings.downloadURLKey) private var downloadURL = ProbeSettings.defaultDownloadURL
-    @AppStorage(ProbeSettings.pingCountKey) private var pingCount = 8
+    @AppStorage(ProbeSettings.pingCountKey) private var pingCount = ProbeSettings.defaultPingCount
+    @AppStorage(ProbeSettings.routerAddressKey) private var routerAddress = ""
+    @AppStorage(ProbeSettings.routerPingCountKey) private var routerPings = ProbeSettings.defaultRouterPingCount
+    @AppStorage(ProbeSettings.downloadSecondsKey) private var downloadSeconds = ProbeSettings.defaultDownloadSeconds
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    TextField("Router address (automatic)", text: $routerAddress)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.numbersAndPunctuation)
+                    Stepper("Router pings: \(routerPings)", value: $routerPings, in: 10...100, step: 10)
+                } header: {
+                    Text("Router test")
+                } footer: {
+                    Text("Pinging your router measures the Wi-Fi link itself, without your internet connection getting in the way. Leave the address blank to find it automatically.")
+                }
+                Section {
+                    Stepper("Download test: \(downloadSeconds) s", value: $downloadSeconds, in: 3...15)
+                } header: {
+                    Text("Download test")
+                } footer: {
+                    Text("Downloads over \(ProbeSettings.downloadStreams) connections at once and ignores the first second or two while they speed up. Longer tests are steadier but use more data.")
+                }
                 Section {
                     TextField("Latency URL", text: $latencyURL)
                         .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
@@ -190,7 +209,10 @@ struct SettingsView: View {
                     Button("Reset to defaults") {
                         latencyURL = ProbeSettings.defaultLatencyURL
                         downloadURL = ProbeSettings.defaultDownloadURL
-                        pingCount = 8
+                        pingCount = ProbeSettings.defaultPingCount
+                        routerAddress = ""
+                        routerPings = ProbeSettings.defaultRouterPingCount
+                        downloadSeconds = ProbeSettings.defaultDownloadSeconds
                     }
                 }
                 Section("About signal strength") {

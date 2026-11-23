@@ -86,6 +86,10 @@ struct SurveyDetailView: View {
                 ForEach(Metric.allCases) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
+            Text(metric.explanation)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack {
                 Toggle("Heatmap", isOn: $showHeatmap).fixedSize()
@@ -216,7 +220,9 @@ struct SurveyDetailView: View {
     private func bottomBar(_ survey: Survey) -> some View {
         VStack(spacing: 6) {
             if measuring {
-                HStack { ProgressView(); Text(status).font(.subheadline) }
+                HStack { ProgressView(); Text(status).font(.subheadline).monospacedDigit() }
+                Text("Hold the phone still at chest height until it finishes.")
+                    .font(.caption).foregroundStyle(.secondary)
             } else if placing == nil {
                 Text(survey.points.isEmpty ? "Tap the map where you're standing, then measure."
                                            : "Tap the map to place a point · tap a dot to edit it · pinch to zoom.")
@@ -248,7 +254,7 @@ struct SurveyDetailView: View {
             warning = "You don't appear to be connected over Wi-Fi, so this reading wasn't saved. Connect to the network you want to map and try again."
             return
         }
-        guard result.latencyMs != nil || result.downloadMbps != nil else {
+        guard result.hasAnyMeasurement else {
             warning = "Measurement failed.\n" + result.errors.joined(separator: "\n")
             return
         }
@@ -257,7 +263,11 @@ struct SurveyDetailView: View {
                                 downloadMbps: result.downloadMbps,
                                 latencyMs: result.latencyMs,
                                 jitterMs: result.jitterMs,
-                                ssid: result.ssid, bssid: result.bssid)
+                                routerLatencyMs: result.routerLatencyMs,
+                                routerJitterMs: result.routerJitterMs,
+                                packetLossPct: result.packetLossPct,
+                                ssid: result.ssid, bssid: result.bssid,
+                                routerAddress: result.routerAddress)
         store.mutate(surveyID) { $0.points.append(point) }
         placing = nil
         if !result.errors.isEmpty { warning = "Saved, but part of the test failed:\n" + result.errors.joined(separator: "\n") }
@@ -394,10 +404,14 @@ struct PointEditorSheet: View {
             Form {
                 Section("Measurements") {
                     row("Download", point.downloadMbps.map { Metric.download.format($0) })
-                    row("Latency", point.latencyMs.map { Metric.latency.format($0) })
-                    row("Jitter", point.jitterMs.map { String(format: "%.1f ms", $0) })
+                    row("Router ping", point.routerLatencyMs.map { Metric.router.format($0) })
+                    row("Router jitter", point.routerJitterMs.map { String(format: "%.1f ms", $0) })
+                    row("Packet loss", point.packetLossPct.map { String(format: "%.1f%%", $0) })
+                    row("Internet ping", point.latencyMs.map { Metric.latency.format($0) })
+                    row("Internet jitter", point.jitterMs.map { String(format: "%.1f ms", $0) })
                     row("Network", point.ssid)
                     row("Access point", point.bssid)
+                    row("Router", point.routerAddress)
                     row("Time", point.date.formatted(date: .abbreviated, time: .shortened))
                 }
                 Section {

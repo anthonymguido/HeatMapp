@@ -59,11 +59,13 @@ enum HeatmapExporter {
             guard let s else { return "" }
             return "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         }
-        var lines = ["x,y,download_mbps,latency_ms,jitter_ms,rssi_dbm,ssid,bssid,timestamp"]
+        var lines = ["x,y,download_mbps,router_latency_ms,router_jitter_ms,packet_loss_pct,latency_ms,jitter_ms,rssi_dbm,ssid,bssid,router,timestamp"]
         for p in points {
             lines.append([String(format: "%.4f", p.x), String(format: "%.4f", p.y),
-                          num(p.downloadMbps), num(p.latencyMs), num(p.jitterMs), num(p.rssi),
-                          quoted(p.ssid), quoted(p.bssid), iso.string(from: p.date)].joined(separator: ","))
+                          num(p.downloadMbps), num(p.routerLatencyMs), num(p.routerJitterMs), num(p.packetLossPct),
+                          num(p.latencyMs), num(p.jitterMs), num(p.rssi),
+                          quoted(p.ssid), quoted(p.bssid), quoted(p.routerAddress),
+                          iso.string(from: p.date)].joined(separator: ","))
         }
         return lines.joined(separator: "\n")
     }

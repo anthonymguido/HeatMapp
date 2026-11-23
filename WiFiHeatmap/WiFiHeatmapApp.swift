@@ -8,7 +8,10 @@ struct WiFiHeatmapApp: App {
         WindowGroup {
             SurveyListView()
                 .environmentObject(store)
-                .task { await LocationPermission.shared.requestIfNeeded() }
+                .task {
+                    await LocationPermission.shared.requestIfNeeded()
+                    await NetworkProbe.primeLocalNetworkAccess()
+                }
         }
     }
 }

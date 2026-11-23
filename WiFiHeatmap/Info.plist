@@ -24,6 +24,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Used to scan your floor with the camera and LiDAR, or to photograph a floor plan.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Used to ping your Wi-Fi router, which measures the quality of the Wi-Fi link itself.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>iOS requires location permission before an app can read the name of the Wi-Fi network you're connected to. Your location is not collected or stored.</string>
 	<key>UILaunchScreen</key>

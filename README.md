@@ -63,3 +63,17 @@ Sideloadly again with the same `.ipa` — your surveys are kept.
 5. Share the heatmap image or a CSV from the share button.
 
 Measurements are only saved while the phone is on Wi-Fi.
+
+### What each measurement means
+
+Each point runs three tests in a row (about 10 seconds; hold the phone still):
+
+- **Router**: 30 pings to your Wi-Fi router. This is the most direct measure of the Wi-Fi link,
+  because your internet connection isn't involved. Also gives jitter and **Loss** (unanswered pings).
+  The first time, iOS asks to allow *Local Network* access. Say **Allow**.
+- **Internet**: ping time to a server on the internet (Wi-Fi + your provider).
+- **Download**: a short speed test over 4 connections at once, ignoring the warm-up. On fast
+  connections this can use a few hundred MB per point; shorten it in Settings if needed. It can't
+  go faster than your internet plan, so spots that all hit your plan's limit look the same here.
+  Use **Router** or **Loss** to compare them.
+
