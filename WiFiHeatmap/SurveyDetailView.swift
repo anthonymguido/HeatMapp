@@ -15,6 +15,10 @@ struct SurveyDetailView: View {
     @State private var shareItems: [Any] = []
     @State private var showShare = false
     @State private var floorPlan: UIImage?
+    @State private var zoom: CGFloat = 1
+    @State private var pan: CGSize = .zero
+    @State private var pinchStart: (zoom: CGFloat, pan: CGSize)?
+    @State private var dragStartPan: CGSize?
 
     private var survey: Survey? { store.survey(surveyID) }
 
@@ -48,7 +52,11 @@ struct SurveyDetailView: View {
                     .disabled(survey.points.isEmpty)
                 }
             }
-            .task(id: survey.floorPlanFile) { floorPlan = store.floorPlanImage(for: survey) }
+            .task(id: survey.floorPlanFile) {
+                floorPlan = store.floorPlanImage(for: survey)
+                zoom = 1
+                pan = .zero
+            }
             .sheet(item: $editing) { point in
                 PointEditorSheet(point: point,
                                  onSave: { updated in
@@ -90,28 +98,36 @@ struct SurveyDetailView: View {
 
     @ViewBuilder
     private func canvas(_ survey: Survey, in available: CGSize) -> some View {
-        let fit = fittedSize(aspect: aspect, in: available)
+        let t = mapTransform(in: available)
         let range = metric.range(for: survey.points)
 
         ZStack(alignment: .topLeading) {
-            if let floorPlan {
-                Image(uiImage: floorPlan).resizable().frame(width: fit.width, height: fit.height)
-            } else {
-                Color.white.frame(width: fit.width, height: fit.height)
+            // Floor plan and heatmap are scaled; dots stay finger-sized and just move apart.
+            Group {
+                if let floorPlan {
+                    Image(uiImage: floorPlan).resizable()
+                } else {
+                    Color.white
+                }
             }
+            .frame(width: t.fit.width, height: t.fit.height)
+            .scaleEffect(t.zoom, anchor: .topLeading)
+            .offset(t.contentOffset)
 
             if showHeatmap, let range,
                let cg = HeatmapRenderer.render(points: survey.points, metric: metric, range: range, aspect: aspect) {
                 Image(decorative: cg, scale: 1)
                     .resizable().interpolation(.high)
-                    .frame(width: fit.width, height: fit.height)
+                    .frame(width: t.fit.width, height: t.fit.height)
+                    .scaleEffect(t.zoom, anchor: .topLeading)
+                    .offset(t.contentOffset)
                     .opacity(opacity)
                     .allowsHitTesting(false)
             }
 
             ForEach(survey.points) { p in
                 PointMarker(point: p, metric: metric, range: range)
-                    .position(x: p.x * fit.width, y: p.y * fit.height)
+                    .position(t.screen(p.x, p.y))
                     .onTapGesture { editing = p }
             }
 
@@ -119,18 +135,82 @@ struct SurveyDetailView: View {
                 Circle().strokeBorder(Color.accentColor, lineWidth: 3)
                     .background(Circle().fill(Color.accentColor.opacity(0.25)))
                     .frame(width: 30, height: 30)
-                    .position(x: placing.x * fit.width, y: placing.y * fit.height)
+                    .position(t.screen(placing.x, placing.y))
                     .allowsHitTesting(false)
             }
         }
-        .frame(width: fit.width, height: fit.height)
+        .frame(width: available.width, height: available.height, alignment: .topLeading)
         .contentShape(Rectangle())
+        .clipped()
         .onTapGesture { location in
-            guard !measuring else { return }
-            placing = CGPoint(x: min(max(location.x / fit.width, 0), 1),
-                              y: min(max(location.y / fit.height, 0), 1))
+            guard !measuring, let spot = t.normalized(location) else { return }
+            placing = spot
         }
-        .frame(width: available.width, height: available.height)
+        .gesture(zoomGesture(in: available))
+        .overlay(alignment: .topTrailing) {
+            if zoom > 1.01 { resetZoomButton }
+        }
+    }
+
+    private var resetZoomButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                zoom = 1
+                pan = .zero
+            }
+        } label: {
+            Label(String(format: "%.1f×", zoom), systemImage: "arrow.down.right.and.arrow.up.left")
+                .font(.footnote.weight(.semibold))
+        }
+        .buttonStyle(.bordered)
+        .background(.regularMaterial, in: Capsule())
+        .padding(10)
+    }
+
+    private func mapTransform(in available: CGSize) -> MapTransform {
+        let fit = fittedSize(aspect: aspect, in: available)
+        let origin = CGPoint(x: (available.width - fit.width) / 2, y: (available.height - fit.height) / 2)
+        let clamped = MapTransform.clamp(pan: pan, zoom: zoom, fit: fit, origin: origin, available: available)
+        return MapTransform(fit: fit, origin: origin, zoom: zoom, pan: clamped)
+    }
+
+    /// Pinch to zoom around the fingers (1×–6×); drag with one finger to pan.
+    private func zoomGesture(in available: CGSize) -> some Gesture {
+        let magnify = MagnifyGesture()
+            .onChanged { value in
+                let t = mapTransform(in: available)
+                if pinchStart == nil { pinchStart = (zoom, t.pan) }
+                guard let start = pinchStart else { return }
+                let anchor = CGPoint(x: value.startAnchor.x * available.width,
+                                     y: value.startAnchor.y * available.height)
+                // The plan point under the fingers when the pinch began stays under them.
+                let cx = (anchor.x - t.origin.x - start.pan.width) / start.zoom
+                let cy = (anchor.y - t.origin.y - start.pan.height) / start.zoom
+                let z = min(max(start.zoom * value.magnification, 1), 6)
+                zoom = z
+                pan = CGSize(width: anchor.x - t.origin.x - cx * z,
+                             height: anchor.y - t.origin.y - cy * z)
+            }
+            .onEnded { _ in
+                pinchStart = nil
+                dragStartPan = nil
+                pan = mapTransform(in: available).pan
+            }
+
+        let drag = DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                guard pinchStart == nil else { return }
+                if dragStartPan == nil { dragStartPan = mapTransform(in: available).pan }
+                guard let start = dragStartPan else { return }
+                pan = CGSize(width: start.width + value.translation.width,
+                             height: start.height + value.translation.height)
+            }
+            .onEnded { _ in
+                dragStartPan = nil
+                pan = mapTransform(in: available).pan
+            }
+
+        return magnify.simultaneously(with: drag)
     }
 
     private func bottomBar(_ survey: Survey) -> some View {
@@ -139,7 +219,7 @@ struct SurveyDetailView: View {
                 HStack { ProgressView(); Text(status).font(.subheadline) }
             } else if placing == nil {
                 Text(survey.points.isEmpty ? "Tap the map where you're standing, then measure."
-                                           : "Tap the map to place a new point · tap a dot to edit it.")
+                                           : "Tap the map to place a point · tap a dot to edit it · pinch to zoom.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             Button {
@@ -206,6 +286,45 @@ struct SurveyDetailView: View {
         guard size.width > 0, size.height > 0 else { return .zero }
         let byWidth = CGSize(width: size.width, height: size.width / aspect)
         return byWidth.height <= size.height ? byWidth : CGSize(width: size.height * aspect, height: size.height)
+    }
+}
+
+// MARK: - Map zoom/pan maths
+
+/// Maps between plan coordinates (0...1) and the canvas on screen at the current zoom/pan.
+struct MapTransform {
+    var fit: CGSize       // plan size at 1×
+    var origin: CGPoint   // top-left of the plan at 1× (centred in the canvas)
+    var zoom: CGFloat
+    var pan: CGSize       // already clamped
+
+    var contentOffset: CGSize {
+        CGSize(width: origin.x + pan.width, height: origin.y + pan.height)
+    }
+
+    func screen(_ x: Double, _ y: Double) -> CGPoint {
+        CGPoint(x: origin.x + CGFloat(x) * fit.width * zoom + pan.width,
+                y: origin.y + CGFloat(y) * fit.height * zoom + pan.height)
+    }
+
+    /// nil if the point is outside the plan.
+    func normalized(_ p: CGPoint) -> CGPoint? {
+        guard fit.width > 0, fit.height > 0, zoom > 0 else { return nil }
+        let x = (p.x - origin.x - pan.width) / zoom / fit.width
+        let y = (p.y - origin.y - pan.height) / zoom / fit.height
+        guard x >= 0, x <= 1, y >= 0, y <= 1 else { return nil }
+        return CGPoint(x: x, y: y)
+    }
+
+    /// Keeps the zoomed plan covering the canvas (or centred when it's smaller than the canvas).
+    static func clamp(pan: CGSize, zoom: CGFloat, fit: CGSize, origin: CGPoint, available: CGSize) -> CGSize {
+        func axis(_ p: CGFloat, _ size: CGFloat, _ o: CGFloat, _ avail: CGFloat) -> CGFloat {
+            let w = size * zoom
+            if w <= avail { return (avail - w) / 2 - o }
+            return min(max(p, avail - w - o), -o)
+        }
+        return CGSize(width: axis(pan.width, fit.width, origin.x, available.width),
+                      height: axis(pan.height, fit.height, origin.y, available.height))
     }
 }
 
