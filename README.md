@@ -52,8 +52,12 @@ Sideloadly again with the same `.ipa` — your surveys are kept.
 1. **+** → name the survey, then add a floor plan (blank grid otherwise):
    - **Scan floor plan with LiDAR** (iPhone Pro models): follow the on-screen steps and arrows,
      walking slowly from room to room, then tap **Finish scan** → **Use this scan**.
+     The ring fills as you turn around each room, ✓ marks show when the floor and ceiling are
+     done, and banners tell you to slow down, tilt the phone or keep turning.
    - Or pick a picture from Photos, or photograph a printed plan.
 2. Stand somewhere, tap that spot on the map → **Measure here** (5–10 s).
+   Pinch to zoom in for precise placement and drag to move around. The button in the corner
+   (e.g. **2.5×**) zooms back out.
 3. Repeat around your home. Switch between Download / Latency / RSSI at the top.
 4. Tap a dot to see details, add a dBm reading, or delete it.
 5. Share the heatmap image or a CSV from the share button.

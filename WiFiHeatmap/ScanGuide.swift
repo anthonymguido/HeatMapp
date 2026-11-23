@@ -98,28 +98,69 @@ enum ScanStep: Int, CaseIterable {
 }
 
 struct CoachMessage: Equatable {
+    enum Style { case warning, hint }
     var text: String
     var icon: String
+    var style: Style = .warning
 }
 
-/// Holds the guide's progress and turns the camera's motion into simple coaching messages.
+/// Holds the guide's progress and turns the camera's motion into simple coaching.
 @MainActor
 final class ScanCoach: ObservableObject {
-    @Published var step: ScanStep = .lookAround
+    @Published var step: ScanStep = .lookAround {
+        didSet { if step != oldValue { lastProgress = nil; tiltSince = nil } }
+    }
     @Published var room = 1
     @Published private(set) var warning: CoachMessage?
+    /// Share of the 360° turn done in this room (step 1), 0...1.
+    @Published private(set) var coverage: Double = 0
+    /// Step 2 progress: has the phone looked down at the floor / up at the ceiling?
+    @Published private(set) var sawFloor = false
+    @Published private(set) var sawCeiling = false
+    @Published private(set) var elapsedSeconds = 0
 
+    static let roomCoveredAt = 0.9
+
+    private var bins = Set<Int>()            // 36 × 10° headings seen in this room
+    private var lastProgress: TimeInterval?  // when a new heading was last seen
+    private var tiltSince: TimeInterval?     // when the phone started pointing too far up/down
+    private var firstTimestamp: TimeInterval?
     private var lastPosition: SIMD3<Float>?
     private var lastForward: SIMD3<Float>?
     private var lastTime: TimeInterval?
     private var fastScore = 0
 
+    var roomCovered: Bool { coverage >= Self.roomCoveredAt }
+    var tiltDone: Bool { sawFloor && sawCeiling }
+
+    /// The arrow (or tick) shown in the step card.
+    var icon: String {
+        switch step {
+        case .lookAround: return roomCovered ? "checkmark" : "arrow.clockwise"
+        case .floorCeiling: return !sawFloor ? "arrow.down" : (!sawCeiling ? "arrow.up" : "checkmark")
+        case .nextRoom: return "arrow.up"
+        case .finish: return "flag.checkered"
+        }
+    }
+
     func reset() {
         step = .lookAround
         room = 1
         warning = nil
+        elapsedSeconds = 0
+        firstTimestamp = nil
         lastPosition = nil; lastForward = nil; lastTime = nil
         fastScore = 0
+        resetRoomProgress()
+    }
+
+    private func resetRoomProgress() {
+        bins.removeAll()
+        coverage = 0
+        sawFloor = false
+        sawCeiling = false
+        lastProgress = nil
+        tiltSince = nil
     }
 
     func next() {
@@ -141,14 +182,19 @@ final class ScanCoach: ObservableObject {
 
     func enteredNextRoom() {
         room += 1
+        resetRoomProgress()
         step = .lookAround
     }
 
     /// Called about 5 times a second while scanning.
     func tick(session: ARSession?) {
         guard let frame = session?.currentFrame else { return }
-        let state = frame.camera.trackingState
+        let now = frame.timestamp
+        if firstTimestamp == nil { firstTimestamp = now }
+        let secs = Int(now - (firstTimestamp ?? now))
+        if secs != elapsedSeconds { elapsedSeconds = secs }
 
+        let state = frame.camera.trackingState
         if case .limited(let reason) = state {
             switch reason {
             case .excessiveMotion:
@@ -171,28 +217,71 @@ final class ScanCoach: ObservableObject {
             return
         }
 
-        // Normal tracking: warn if turning or walking too fast.
         let t = frame.camera.transform
         let position = SIMD3(t.columns.3.x, t.columns.3.y, t.columns.3.z)
-        let forward = -SIMD3(t.columns.2.x, t.columns.2.y, t.columns.2.z)
-        defer { lastPosition = position; lastForward = forward; lastTime = frame.timestamp }
+        let forward = simd_normalize(-SIMD3(t.columns.2.x, t.columns.2.y, t.columns.2.z))
+        let pitch = Double(asin(max(-1, min(1, forward.y)))) * 180 / .pi   // + up, − down
+        defer { lastPosition = position; lastForward = forward; lastTime = now }
 
-        guard let lp = lastPosition, let lf = lastForward, let lt = lastTime else {
-            warning = nil
+        // Step 1: which compass directions has the phone pointed at in this room?
+        if step == .lookAround, abs(forward.y) < 0.8 {
+            var yaw = Double(atan2(forward.x, forward.z)) * 180 / .pi
+            if yaw < 0 { yaw += 360 }
+            let bin = min(Int(yaw / 10), 35)
+            if bins.insert(bin).inserted {
+                lastProgress = now
+                coverage = Double(bins.count) / 36
+            }
+        }
+
+        // Step 2: has it looked down at the floor and up at the ceiling?
+        if step == .floorCeiling {
+            if pitch < -25, !sawFloor { sawFloor = true }
+            if pitch > 20, !sawCeiling { sawCeiling = true }
+        }
+
+        // Moving too fast?
+        if let lp = lastPosition, let lf = lastForward, let lt = lastTime, now - lt > 0.05 {
+            let dt = now - lt
+            let cosAngle = max(-1, min(1, simd_dot(forward, lf)))
+            let turnDegPerSec = Double(acos(cosAngle)) * 180 / .pi / dt
+            let walkMPerSec = Double(simd_distance(position, lp)) / dt
+            let tooFast = turnDegPerSec > 70 || walkMPerSec > 1.2
+            fastScore = tooFast ? min(fastScore + 1, 4) : max(fastScore - 1, 0)
+        }
+
+        // Pick the most important message.
+        if fastScore >= 2 {
+            warning = CoachMessage(text: "Slow down. Turn and walk more slowly.", icon: "tortoise.fill")
             return
         }
-        let dt = frame.timestamp - lt
-        guard dt > 0.05 else { return }
 
-        let cosAngle = max(-1, min(1, simd_dot(simd_normalize(forward), simd_normalize(lf))))
-        let turnDegPerSec = Double(acos(cosAngle)) * 180 / .pi / dt
-        let walkMPerSec = Double(simd_distance(position, lp)) / dt
+        if step != .floorCeiling, abs(pitch) > 55 {
+            if tiltSince == nil { tiltSince = now }
+            if let since = tiltSince, now - since >= 1 {
+                warning = pitch < 0
+                    ? CoachMessage(text: "Tilt the phone up. Point it at the walls.", icon: "arrow.up", style: .hint)
+                    : CoachMessage(text: "Tilt the phone down. Point it at the walls.", icon: "arrow.down", style: .hint)
+                return
+            }
+        } else {
+            tiltSince = nil
+        }
 
-        let tooFast = turnDegPerSec > 70 || walkMPerSec > 1.2
-        fastScore = tooFast ? min(fastScore + 1, 4) : max(fastScore - 1, 0)
-        warning = fastScore >= 2
-            ? CoachMessage(text: "Slow down. Turn and walk more slowly.", icon: "tortoise.fill")
-            : nil
+        if step == .lookAround, !roomCovered {
+            if lastProgress == nil { lastProgress = now }
+            if let last = lastProgress, now - last > 6 {
+                warning = CoachMessage(text: "Keep turning slowly until every wall is outlined.", icon: "arrow.clockwise", style: .hint)
+                return
+            }
+        }
+
+        if (240...260).contains(elapsedSeconds) {
+            warning = CoachMessage(text: "Big areas can drift. Consider finishing here and scanning the rest as a second survey.", icon: "clock", style: .hint)
+            return
+        }
+
+        warning = nil
     }
 }
 
@@ -202,14 +291,27 @@ struct ScanStepCard: View {
     @ObservedObject var coach: ScanCoach
     var onFinish: () -> Void
 
+    private var iconIsTick: Bool { coach.icon == "checkmark" }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 14) {
-                Image(systemName: coach.step.icon)
-                    .font(.system(size: 40, weight: .bold))
-                    .foregroundStyle(.yellow)
-                    .symbolEffect(.pulse, options: .repeating)
-                    .frame(width: 56, height: 56)
+                ZStack {
+                    if coach.step == .lookAround {
+                        Circle().stroke(.white.opacity(0.2), lineWidth: 5)
+                        Circle()
+                            .trim(from: 0, to: coach.coverage)
+                            .stroke(.green, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                            .animation(.easeOut(duration: 0.3), value: coach.coverage)
+                    }
+                    Image(systemName: coach.icon)
+                        .font(.system(size: coach.step == .lookAround ? 28 : 40, weight: .bold))
+                        .foregroundStyle(iconIsTick ? Color.green : Color.yellow)
+                        .symbolEffect(.pulse, options: .repeating, isActive: !iconIsTick)
+                }
+                .frame(width: 60, height: 60)
+
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Room \(coach.room) · Step \(coach.step.rawValue) of \(ScanStep.allCases.count)")
                         .font(.caption.weight(.semibold))
@@ -217,6 +319,7 @@ struct ScanStepCard: View {
                     Text(coach.step.title).font(.headline)
                     Text(coach.step.detail).font(.subheadline)
                         .fixedSize(horizontal: false, vertical: true)
+                    progress
                 }
             }
 
@@ -247,6 +350,32 @@ struct ScanStepCard: View {
         .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 18))
         .environment(\.colorScheme, .dark)
     }
+
+    @ViewBuilder
+    private var progress: some View {
+        switch coach.step {
+        case .lookAround:
+            if coach.roomCovered {
+                Text("Room covered. Tap Next.").font(.subheadline.weight(.semibold)).foregroundStyle(.green)
+            } else {
+                Text("Walls swept: \(Int(coach.coverage * 100))%").font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+            }
+        case .floorCeiling:
+            HStack(spacing: 14) {
+                Label("Floor", systemImage: coach.sawFloor ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(coach.sawFloor ? Color.green : Color.white.opacity(0.85))
+                Label("Ceiling", systemImage: coach.sawCeiling ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(coach.sawCeiling ? Color.green : Color.white.opacity(0.85))
+                if coach.tiltDone {
+                    Text("Tap Next.").foregroundStyle(.green)
+                }
+            }
+            .font(.subheadline.weight(.semibold))
+        case .nextRoom, .finish:
+            EmptyView()
+        }
+    }
 }
 
 struct CoachBanner: View {
@@ -263,7 +392,8 @@ struct CoachBanner: View {
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 14).padding(.vertical, 10)
-        .background(Color.red.opacity(0.85), in: RoundedRectangle(cornerRadius: 14))
+        .background(message.style == .warning ? Color.red.opacity(0.85) : Color.blue.opacity(0.85),
+                    in: RoundedRectangle(cornerRadius: 14))
         .transition(.move(edge: .top).combined(with: .opacity))
     }
 }

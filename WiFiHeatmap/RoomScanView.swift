@@ -133,6 +133,13 @@ struct RoomScanView: View {
             .buttonStyle(.bordered)
             Spacer()
             if isScanning {
+                Label(String(format: "%d:%02d", coach.elapsedSeconds / 60, coach.elapsedSeconds % 60),
+                      systemImage: "timer")
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(.black.opacity(0.5), in: Capsule())
+                Spacer()
                 Button("Done") { controller.finish() }
                     .buttonStyle(.borderedProminent)
             }
