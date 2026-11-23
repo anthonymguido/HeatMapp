@@ -49,7 +49,10 @@ Sideloadly again with the same `.ipa` — your surveys are kept.
 
 ## Using the app
 
-1. **+** → name the survey, optionally pick or photograph a floor plan (blank grid otherwise).
+1. **+** → name the survey, then add a floor plan (blank grid otherwise):
+   - **Scan floor plan with LiDAR** (iPhone Pro models): follow the on-screen steps and arrows,
+     walking slowly from room to room, then tap **Finish scan** → **Use this scan**.
+   - Or pick a picture from Photos, or photograph a printed plan.
 2. Stand somewhere, tap that spot on the map → **Measure here** (5–10 s).
 3. Repeat around your home. Switch between Download / Latency / RSSI at the top.
 4. Tap a dot to see details, add a dBm reading, or delete it.

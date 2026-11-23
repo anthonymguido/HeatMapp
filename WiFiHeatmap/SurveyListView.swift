@@ -1,4 +1,5 @@
 import PhotosUI
+import RoomPlan
 import SwiftUI
 
 struct SurveyListView: View {
@@ -64,6 +65,7 @@ struct NewSurveySheet: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var image: UIImage?
     @State private var showCamera = false
+    @State private var showScan = false
     @State private var loadFailed = false
 
     var body: some View {
@@ -79,6 +81,11 @@ struct NewSurveySheet: View {
                             .frame(maxHeight: 180)
                             .frame(maxWidth: .infinity)
                     }
+                    if RoomCaptureSession.isSupported {
+                        Button { showScan = true } label: {
+                            Label("Scan floor plan with LiDAR", systemImage: "viewfinder")
+                        }
+                    }
                     PhotosPicker(selection: $photoItem, matching: .images) {
                         Label(image == nil ? "Choose floor plan from Photos" : "Choose a different image", systemImage: "photo")
                     }
@@ -91,7 +98,13 @@ struct NewSurveySheet: View {
                 } header: {
                     Text("Floor plan")
                 } footer: {
-                    Text("Optional. A screenshot, a photo of a sketch, or a scanned plan all work. Without one, you get a blank grid.")
+                    Text("Optional. Scan your floor with LiDAR, or use a screenshot, a photo of a sketch or a scanned plan. Without one, you get a blank grid.")
+                }
+            }
+            .fullScreenCover(isPresented: $showScan) {
+                RoomScanView { scanned in
+                    image = scanned
+                    photoItem = nil
                 }
             }
             .navigationTitle("New Survey")
